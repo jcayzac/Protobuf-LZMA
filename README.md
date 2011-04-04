@@ -30,5 +30,14 @@ Protobuf-LZMA
 
 Implements two classes for using with the open-source [Protobuf](http://code.google.com/p/protobuf/) C++ library, LzmaInputStream and LzmaOutputStream, that compress and decompress data using [Igor Pavlov's public domain LZMA SDK](http://www.7-zip.org/sdk.html). Achieved compression ratio is often twice as good as with GZip compression.
 
+Compression is done per block of data (1MB by default, but it's configurable). Each block embeds a SHA-256 digest of the uncompressed data, so that it can be verified at decompression time. Such verification is entirely optional.
+
+Compression settings, such as dictionary size or compression level, can be modified anytime and will affect the subsequent blocks.
+
 This code is hereby released under New BSD license.
+
+Limitations:
+------------
+
+I'm using these classes for reading from and writing to local files with std::ifstream and std::ofstream, so there might be some problems when an entire block of data cannot be read or written at once. If you want to use them for I/O over a network connection, feel free to fix this issue and send me a pull request :)
 
