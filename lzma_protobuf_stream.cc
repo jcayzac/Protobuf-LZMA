@@ -120,6 +120,7 @@ LzmaInputStream::~LzmaInputStream() {
 
 bool LzmaInputStream::Next(const void** data, int* size) {
   GOOGLE_CHECK(data);
+  GOOGLE_CHECK(size);
   // "Read" what's left in the buffer
   uint32_t read_count(mPacketSize-mCurrentIndex);
   if (!read_count) {

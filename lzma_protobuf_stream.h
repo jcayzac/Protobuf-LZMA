@@ -117,6 +117,9 @@ class LIBPROTOBUF_EXPORT LzmaOutputStream : public ZeroCopyOutputStream {
     * pre-compressed data on the wire, for instance,
     * then revert to aggressive compression settings.
     *
+    * It is one case where you may want to call Flush()
+    * manually (before changing the options).
+    *
     * See Lzma.txt in the LZMA SDK for a detailed description
     * of the various settings.
     *
