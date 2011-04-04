@@ -78,7 +78,6 @@ class LIBPROTOBUF_EXPORT LzmaInputStream : public ZeroCopyInputStream {
   lzma_sha256*     mSha256;
   vector<uint8>    mPropsEncoded;
   uint32           mPropsSize;
-  bool             mPropsRead;
   bool             mFUBAR;
 
   GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(LzmaInputStream);
@@ -96,7 +95,7 @@ class LIBPROTOBUF_EXPORT LzmaOutputStream : public ZeroCopyOutputStream {
     */
   explicit LzmaOutputStream(
     ZeroCopyOutputStream* sub_stream,
-    uint32 max_packet_size = 0
+    uint32 max_packet_size = (1u << 20)
   );
   virtual ~LzmaOutputStream();
 

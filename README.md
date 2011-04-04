@@ -41,3 +41,7 @@ Limitations:
 
 I'm using these classes for reading from and writing to local files with std::ifstream and std::ofstream, so there might be some problems when an entire block of data cannot be read or written at once. If you want to use them for I/O over a network connection, feel free to fix this issue and send me a pull request :)
 
+Building the LZMA SDK:
+----------------------
+
+Refer to its documentation. All you need if you want to encode using a single CPU core is *LzFind.c*, *LzmaDec.c*, *LzmaEnc.c* and *Sha256.c*. You will also need to append *-D_7ZIP_ST* (as in "Single Thread") to your CFLAGS.
