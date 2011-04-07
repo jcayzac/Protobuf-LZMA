@@ -28,7 +28,7 @@
  *
  */
 
-#include "lzma_protobuf_stream.h"
+#include <google/protobuf/io/lzma_protobuf_stream.h>
 #include <google/protobuf/io/coded_stream.h>
 #include <lzma/C/LzmaEnc.h>
 #include <lzma/C/LzmaDec.h>
