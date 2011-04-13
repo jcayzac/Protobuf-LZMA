@@ -45,14 +45,14 @@ struct lzma_sha256: CSha256 {
       uint64 integer[4];
     };
     bool operator==(const digest_t& o) const {
-      for (size_t i(0); i<4; ++i)
+      for (uint32 i(0); i<4; ++i)
         if (integer[i] != o.integer[i])
           return false;
       return true;
     }
     bool operator!=(const digest_t& o) const { return !(*this == o); }
   };
-  void compute(digest_t& digest, const uint8_t* data, size_t size) {
+  void compute(digest_t& digest, const uint8_t* data, uint32 size) {
     Sha256_Update(this, data, size);
     Sha256_Final(this, digest.bytes);
   }
@@ -63,7 +63,7 @@ struct lzma_sha256: CSha256 {
 
 static inline internal::LogMessage& operator<<(internal::LogMessage& o, const lzma_sha256::digest_t& x) {
   static const char* const hexify = "0123456789ABCDEF";
-  for (size_t i(0); i<8; ++i) {
+  for (uint32 i(0); i<32; ++i) {
     o << (char) hexify[x.bytes[i]>>4] << (char) hexify[x.bytes[i]&0xF];
   }
   return o;
@@ -91,6 +91,37 @@ struct lzma_alloc: ISzAlloc {
   }
 };
 
+static const char* error_msg(int err) {
+  switch(err) {
+    case SZ_OK:                return "";
+    case SZ_ERROR_DATA:        return " [SZ_ERROR_DATA]";
+    case SZ_ERROR_MEM:         return " [SZ_ERROR_MEM]";
+    case SZ_ERROR_CRC:         return " [SZ_ERROR_CRC]";
+    case SZ_ERROR_UNSUPPORTED: return " [SZ_ERROR_UNSUPPORTED]";
+    case SZ_ERROR_PARAM:       return " [SZ_ERROR_PARAM]";
+    case SZ_ERROR_INPUT_EOF:   return " [SZ_ERROR_INPUT_EOF]";
+    case SZ_ERROR_OUTPUT_EOF:  return " [SZ_ERROR_OUTPUT_EOF]";
+    case SZ_ERROR_READ:        return " [SZ_ERROR_READ]";
+    case SZ_ERROR_WRITE:       return " [SZ_ERROR_WRITE]";
+    case SZ_ERROR_PROGRESS:    return " [SZ_ERROR_PROGRESS]";
+    case SZ_ERROR_FAIL:        return " [SZ_ERROR_FAIL]";
+    case SZ_ERROR_THREAD:      return " [SZ_ERROR_THREAD]";
+    case SZ_ERROR_ARCHIVE:     return " [SZ_ERROR_ARCHIVE]";
+    case SZ_ERROR_NO_ARCHIVE:  return " [SZ_ERROR_NO_ARCHIVE]";
+    default:                   return " [Unknown error]";
+  }
+}
+
+static const char* status_msg(ELzmaStatus s) {
+  switch (s) {
+    case LZMA_STATUS_NOT_SPECIFIED:               return "";
+    case LZMA_STATUS_FINISHED_WITH_MARK:          return " [Stream was finished with end mark]";
+    case LZMA_STATUS_NOT_FINISHED:                return " [Stream was not finished]";
+    case LZMA_STATUS_NEEDS_MORE_INPUT:            return " [Must provide more input bytes]";
+    case LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK: return " [Stream was finished without end mark]";
+    default:                                      return " [Unknown status]";
+  }
+}
 
 } // anonymous namespace
 
@@ -105,8 +136,7 @@ LzmaInputStream::LzmaInputStream(
 , mByteCount(0)
 , mDataVerificationRequested(verify_data)
 , mSha256(0)
-, mPropsEncoded(LZMA_PROPS_SIZE)
-, mPropsSize(LZMA_PROPS_SIZE)
+, mPropsEncoded()
 , mFUBAR(false)
 {
   if (mDataVerificationRequested) {
@@ -122,11 +152,11 @@ bool LzmaInputStream::Next(const void** data, int* size) {
   GOOGLE_CHECK(data);
   GOOGLE_CHECK(size);
   // "Read" what's left in the buffer
-  uint32_t read_count(mPacketSize-mCurrentIndex);
+  uint32 read_count(mPacketSize-mCurrentIndex);
   if (!read_count) {
     // Buffer was empty. Fetch new data
     if (!ReadNextBlock()) {
-      GOOGLE_LOG(ERROR) << "LZMA: Failed to read a block";
+      GOOGLE_LOG(ERROR) << "LZMA: Failed to read a block\n";
       return false;
     }
     read_count = mPacketSize-mCurrentIndex;
@@ -142,7 +172,7 @@ bool LzmaInputStream::Next(const void** data, int* size) {
 
 void LzmaInputStream::BackUp(int count) {
   GOOGLE_DCHECK_LT(0, count);
-  const uint32_t u_count(count);
+  const uint32 u_count(count);
   GOOGLE_DCHECK_LT(u_count, mCurrentIndex);
   GOOGLE_DCHECK_LT(u_count, mByteCount);
   mCurrentIndex -= u_count;
@@ -151,13 +181,13 @@ void LzmaInputStream::BackUp(int count) {
 
 bool LzmaInputStream::Skip(int count) {
   GOOGLE_DCHECK_LT(0, count);
-  uint32_t u_count(count);
+  uint32 u_count(count);
   while (u_count > mPacketSize-mCurrentIndex) {
     // discard current packet and load another
     u_count    -= mPacketSize-mCurrentIndex;
     mByteCount += mPacketSize-mCurrentIndex;
     if (!ReadNextBlock()) {
-      GOOGLE_LOG(ERROR) << "LZMA: Failed to read a block";
+      GOOGLE_LOG(ERROR) << "LZMA: Failed to read a block\n";
       return false;
     }
   }
@@ -176,44 +206,46 @@ bool LzmaInputStream::ReadNextBlock() {
 
   uint32 next_props_size;
   if (!mWire.ReadVarint32(&next_props_size)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to read properties size";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to read properties size\n";
     mFUBAR=true;
+    mPropsEncoded.clear();
     return false;
   }
   
   if (next_props_size) {
     mPropsEncoded.resize(next_props_size);
     if (!mWire.ReadRaw(&mPropsEncoded[0], next_props_size)) {
-      GOOGLE_LOG(ERROR) << "LZMA: Failed to read properties";
+      GOOGLE_LOG(ERROR) << "LZMA: Failed to read properties\n";
       mFUBAR=true;
       return false;
     }
-    mPropsSize = next_props_size;
   }
 
-  uint32_t compressed_size;
+  uint32 compressed_size;
   if (!mWire.ReadVarint32(&compressed_size)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to parse compressed size";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to parse compressed size\n";
     return false;
   }
+
   if (!mWire.ReadVarint32(&mPacketSize)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to parse packet size";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to parse packet size\n";
     return false;
   }
+
   mBuffer.resize(mPacketSize+compressed_size);
   if (mBuffer.size() != mPacketSize+compressed_size) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to resize buffer";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to resize buffer\n";
     return false;
   }
   
   lzma_sha256::digest_t saved_sha256;
   if (!mWire.ReadRaw(saved_sha256.bytes, 32)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to read packet's Sha-256";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to read packet's Sha-256\n";
     return false;
   }
-  
+
   if (!mWire.ReadRaw(&mBuffer[mPacketSize], compressed_size)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to read raw packet";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to read " << compressed_size << "-byte long raw packet\n";
     return false;
   }
   
@@ -224,13 +256,13 @@ bool LzmaInputStream::ReadNextBlock() {
   const int ret(LzmaDecode(
     &mBuffer[0], &destLen,
     &mBuffer[mPacketSize], &srcLen,
-    &mPropsEncoded[0], mPropsSize,
+    &mPropsEncoded[0], mPropsEncoded.size(),
     LZMA_FINISH_ANY, &status, lzma_alloc::get()
   ));
   mPacketSize = (uint32) destLen;
 
   if (ret || (status==LZMA_STATUS_NOT_FINISHED)) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to decompress data";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to decompress " << compressed_size << " bytes of data" << error_msg(ret) << status_msg(status) << "\n";
     mPacketSize = 0;
     return false;
   }
@@ -239,12 +271,16 @@ bool LzmaInputStream::ReadNextBlock() {
     lzma_sha256::digest_t computed_sha256;
     mSha256->compute(computed_sha256, &mBuffer[0], mPacketSize);
     if (saved_sha256 != computed_sha256) {
-      GOOGLE_LOG(ERROR) << "LZMA: Corrupt data";
+      GOOGLE_LOG(ERROR) << "LZMA: Corrupt data\n";
       return false;
     }
   }
 
-  GOOGLE_LOG(INFO) << "LZMA: Read a packet (raw: " << compressed_size << ", decompressed: " << mPacketSize << ")";
+  GOOGLE_LOG(INFO) << "LZMA: Read a packet\n"
+  << "\t         Raw: " << compressed_size << "\n"
+  << "\tDecompressed: " << mPacketSize << "\n"
+  << "\t     SHA-256: " << saved_sha256 << "\n"
+  ;
   return true;
 }
 
@@ -257,7 +293,7 @@ bool LzmaInputStream::ReadNextBlock() {
 // data gets overwritten, it has already been processed).
 LzmaOutputStream::LzmaOutputStream(
   ZeroCopyOutputStream* sub_stream,
-  uint32_t max_packet_size
+  uint32 max_packet_size
 )
 : mSubStream(sub_stream)
 , mPacketSize(0)
@@ -267,13 +303,12 @@ LzmaOutputStream::LzmaOutputStream(
 , mBuffer(mMaxPacketSize+mOffsetToUncompressedData)
 , mSha256(new lzma_sha256)
 , mEncoderHandle(LzmaEnc_Create(lzma_alloc::get()))
-, mPropsEncoded(LZMA_PROPS_SIZE)
-, mPropsSize(LZMA_PROPS_SIZE)
+, mPropsEncoded()
 , mPropsWritten(false)
 {
   if (mEncoderHandle) {
     if (!ChangeEncodingOptions()) {
-      GOOGLE_LOG(ERROR) << "LZMA: Can't initialize";
+      GOOGLE_LOG(ERROR) << "LZMA: Can't initialize\n";
       LzmaEnc_Destroy(mEncoderHandle, lzma_alloc::get(), lzma_alloc::get());
       mEncoderHandle = 0;
     }
@@ -291,7 +326,7 @@ LzmaOutputStream::~LzmaOutputStream() {
 
 bool LzmaOutputStream::Flush() {
   if (!mSha256 || !mEncoderHandle || !mSubStream) {
-    GOOGLE_LOG(ERROR) << "LZMA: Bad state";
+    GOOGLE_LOG(ERROR) << "LZMA: Bad state\n";
     return false;
   }
   if (!mPacketSize) return true;
@@ -303,7 +338,8 @@ bool LzmaOutputStream::Flush() {
     wire.WriteVarint32(0);
   }
   else {
-    wire.WriteRaw(&mPropsEncoded[0], mPropsSize);
+    wire.WriteVarint32(mPropsEncoded.size());
+    wire.WriteRaw(&mPropsEncoded[0], mPropsEncoded.size());
     mPropsWritten=true;
   }
 
@@ -313,7 +349,7 @@ bool LzmaOutputStream::Flush() {
       &mBuffer[mOffsetToUncompressedData], (SizeT) mPacketSize,
       0, 0, lzma_alloc::get(), lzma_alloc::get()
     )) {
-    GOOGLE_LOG(ERROR) << "LZMA: Failed to compress packet";
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to compress packet\n";
     return false;
   }
 
@@ -325,7 +361,12 @@ bool LzmaOutputStream::Flush() {
   wire.WriteRaw(computed_sha256.bytes, 32);
   
   wire.WriteRaw(&mBuffer[0], (uint32) dst_length);
-  GOOGLE_LOG(INFO) << "LZMA: Wrote a packet (raw: " << mPacketSize << ", compressed: " << dst_length << ")";
+  GOOGLE_LOG(INFO) << "LZMA: Wrote a packet\n"
+  << "\t  Raw size: " << mPacketSize << "\n"
+  << "\tCompressed: " << dst_length << "\n"
+  << "\t   SHA-256: " << computed_sha256 << "\n"
+  << "\tProperties: " << mPropsEncoded.size() << "\n"
+  ;
 
   mPacketSize = 0;
   return true;
@@ -362,12 +403,16 @@ bool LzmaOutputStream::ChangeEncodingOptions(
   
   int error = LzmaEnc_SetProps(mEncoderHandle, &props);
   SizeT size(LZMA_PROPS_SIZE);
+  mPropsEncoded.resize(size);
   error |= LzmaEnc_WriteProperties(mEncoderHandle, &mPropsEncoded[0], &size);
-
-  mPropsSize = (uint32) size;
+  if (error) {
+    GOOGLE_LOG(ERROR) << "LZMA: Failed to change encoding options\n";
+    mPropsEncoded.clear();
+    return false;
+  }
+  mPropsEncoded.resize(size);
   mPropsWritten = false;
-
-  return !error;
+  return true;
 }
 
 bool LzmaOutputStream::Next(void** data, int* size) {
